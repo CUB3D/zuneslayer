@@ -1,0 +1,47 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 10.00
+# Visual Studio 2008
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "nativeapp", "nativeapp\nativeapp.vcproj", "{B0875BDE-8184-4917-A28B-D9301773A740}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "exploiter", "exploiter\exploiter.csproj", "{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}"
+	ProjectSection(ProjectDependencies) = postProject
+		{B0875BDE-8184-4917-A28B-D9301773A740} = {B0875BDE-8184-4917-A28B-D9301773A740}
+	EndProjectSection
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Mixed Platforms = Debug|Mixed Platforms
+		Debug|STANDARDSDK_500 (ARMV4I) = Debug|STANDARDSDK_500 (ARMV4I)
+		Release|Mixed Platforms = Release|Mixed Platforms
+		Release|STANDARDSDK_500 (ARMV4I) = Release|STANDARDSDK_500 (ARMV4I)
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{B0875BDE-8184-4917-A28B-D9301773A740}.Debug|Mixed Platforms.ActiveCfg = Debug|STANDARDSDK_500 (ARMV4I)
+		{B0875BDE-8184-4917-A28B-D9301773A740}.Debug|Mixed Platforms.Build.0 = Debug|STANDARDSDK_500 (ARMV4I)
+		{B0875BDE-8184-4917-A28B-D9301773A740}.Debug|STANDARDSDK_500 (ARMV4I).ActiveCfg = Debug|STANDARDSDK_500 (ARMV4I)
+		{B0875BDE-8184-4917-A28B-D9301773A740}.Debug|STANDARDSDK_500 (ARMV4I).Build.0 = Debug|STANDARDSDK_500 (ARMV4I)
+		{B0875BDE-8184-4917-A28B-D9301773A740}.Release|Mixed Platforms.ActiveCfg = Release|STANDARDSDK_500 (ARMV4I)
+		{B0875BDE-8184-4917-A28B-D9301773A740}.Release|Mixed Platforms.Build.0 = Release|STANDARDSDK_500 (ARMV4I)
+		{B0875BDE-8184-4917-A28B-D9301773A740}.Release|STANDARDSDK_500 (ARMV4I).ActiveCfg = Release|STANDARDSDK_500 (ARMV4I)
+		{B0875BDE-8184-4917-A28B-D9301773A740}.Release|STANDARDSDK_500 (ARMV4I).Build.0 = Release|STANDARDSDK_500 (ARMV4I)
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Debug|Mixed Platforms.ActiveCfg = Debug|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Debug|Mixed Platforms.Build.0 = Debug|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Debug|Mixed Platforms.Deploy.0 = Debug|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Debug|STANDARDSDK_500 (ARMV4I).ActiveCfg = Debug|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Debug|STANDARDSDK_500 (ARMV4I).Build.0 = Debug|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Debug|STANDARDSDK_500 (ARMV4I).Deploy.0 = Debug|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Release|Mixed Platforms.ActiveCfg = Release|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Release|Mixed Platforms.Build.0 = Release|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Release|Mixed Platforms.Deploy.0 = Release|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Release|STANDARDSDK_500 (ARMV4I).ActiveCfg = Release|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Release|STANDARDSDK_500 (ARMV4I).Build.0 = Release|Zune
+		{41E20BB9-749C-4BEE-9A8F-DF416E708AF5}.Release|STANDARDSDK_500 (ARMV4I).Deploy.0 = Release|Zune
+		{070A7E77-E5DA-4170-9DFC-F45DB5D98B4F}.Debug|Mixed Platforms.ActiveCfg = Debug|Zune
+		{070A7E77-E5DA-4170-9DFC-F45DB5D98B4F}.Debug|STANDARDSDK_500 (ARMV4I).ActiveCfg = Debug|Zune
+		{070A7E77-E5DA-4170-9DFC-F45DB5D98B4F}.Release|Mixed Platforms.ActiveCfg = Release|Zune
+		{070A7E77-E5DA-4170-9DFC-F45DB5D98B4F}.Release|STANDARDSDK_500 (ARMV4I).ActiveCfg = Release|Zune
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

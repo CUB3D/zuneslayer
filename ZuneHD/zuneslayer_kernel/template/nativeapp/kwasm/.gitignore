@@ -1,0 +1,4 @@
+*.kdev4
+.DS_Store
+*.dSYM
+*.xcworkspace

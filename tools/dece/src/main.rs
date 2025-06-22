@@ -124,6 +124,10 @@ enum Cmd {
 
     /// Decompress update cab file
     DecompressCab {},
+
+    DecB00F {
+        p: PathBuf
+    }
 }
 
 fn main() -> anyhow::Result<()>{
@@ -145,6 +149,10 @@ fn main() -> anyhow::Result<()>{
         }
         Cmd::DecompressCab { .. } => {
             dec_cab(a.input, a.out)?;
+        }
+        Cmd::DecB00F { p } => {
+            let x = dec_b000f(&std::fs::read(p)?)?;
+            std::fs::write("xip", x.as_slice())?;
         }
     }
 

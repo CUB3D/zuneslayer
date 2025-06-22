@@ -1,0 +1,6 @@
+zunecom.CommandReq.PayloadLsdir.path 		max_size:300
+zunecom.CommandReq.PayloadRdfile.path 		max_size:300
+zunecom.CommandResp.RespLsdir.path 	    	max_count:300
+zunecom.CommandResp.RespLsdir_ent.path 	    	max_size:300
+zunecom.CommandResp.RespRdfile.data 		max_size:0x400
+zunecom.CommandResp.RespErr.msg 		max_size:128

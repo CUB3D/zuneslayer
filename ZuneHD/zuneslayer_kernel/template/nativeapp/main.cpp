@@ -33,8 +33,11 @@
 #include <wininet.h>
 #include <Iphlpapi.h>
 #include <winsock2.h>
+#include "protocol/pb_encode.h"
+#include "protocol/pb_decode.h"
+#include "protocol/msg.pb.h"
 
-wchar_t foo[128];
+wchar_t foo[256];
 
 typedef unsigned int u32;
 typedef unsigned short u16;
@@ -52,7 +55,7 @@ DWORD WINAPI thread_exit_with_value(void* x) {
 }
 
 // Write `val` to `kptr`
-void kwr(DWORD kptr, DWORD val) {
+static void kwr(DWORD kptr, DWORD val) {
 	HANDLE t = CreateThread(NULL, 0, thread_exit_with_value, (void*)val, 0, NULL);
 	Sleep(200);
 	BOOL b = GetExitCodeThread(t, (DWORD*)kptr);
@@ -60,13 +63,13 @@ void kwr(DWORD kptr, DWORD val) {
 }
 
 // Read byte from `kptr`
-DWORD kreadb(DWORD kptr) {
+static DWORD kreadb(DWORD kptr) {
 	HMODULE mh = GetModuleHandleW(L"coredll.dll");
 	KFSH ghi = (KFSH) GetProcAddress(mh, L"GetFSHeapInfo");
 	DWORD hi = ghi(kptr, 0, 0x1338);
 	return hi;
 }
-u32 kreadu32(u32 kptr) {
+static u32 kreadu32(u32 kptr) {
 	u32 d = kreadb(kptr);
 	u32 c = kreadb(kptr+1);
 	u32 b = kreadb(kptr+2);
@@ -80,7 +83,7 @@ u16 kreadu16(u32 kptr) {
 }
 
 // Write byte `val` to `kptr`
-void kwriteb(DWORD kptr, BYTE val) {
+static void kwriteb(DWORD kptr, BYTE val) {
 	HMODULE mh = GetModuleHandleW(L"coredll.dll");
 	KFSH ghi = (KFSH) GetProcAddress(mh, L"GetFSHeapInfo");
 	ghi(kptr, (DWORD)val, 0x1337);
@@ -94,47 +97,32 @@ void kmemcpy(DWORD kptr, BYTE* buf, size_t len) {
 	}
 }
 
-      wchar_t* paths[16] = {
-L"\\gametitle\\584E07D1\\*",
-L"\\gametitle\\584E07D1\\Content\\*",
-L"\\gametitle\\584E07D1\\Content\\Audio\\*",
-L"\\gametitle\\584E07D1\\Content\\Images\\*",
-L"\\gametitle\\584E07D1\\Content\\Sounds\\*",
-L"\\gametitle\\584E07D1\\Content\\Text\\*",
-L"\\gametitle\\584E07D1\\Content\\Text\\Strings\\*",
-L"\\gametitle\\584E07D1\\Content\\Fonts\\*",
-L"\\gametitle\\584E07D1\\Content\\UI\\*",
-L"\\gametitle\\584E07D1\\Content\\UI\\ContactDetails\\*",
-L"\\gametitle\\584E07D1\\Content\\UI\\ContactEditors\\*",
-L"\\gametitle\\584E07D1\\Content\\UI\\SetupWizard\\*",
-L"\\gametitle\\584E07D1\\Content\\ZuneAppLib\\*",
-L"\\gametitle\\584E07D1\\Content\\Models\\*",
-L"\\gametitle\\584E07D1\\Content\\Pictures\\*",
-L"\\gametitle\\584E07D1\\Content\\Shaders\\*",
-   };
-
-	        wchar_t* paths2[16] = {
-L"\\gametitle\\584E07D1",
-L"\\gametitle\\584E07D1\\Content",
-L"\\gametitle\\584E07D1\\Content\\Audio",
-L"\\gametitle\\584E07D1\\Content\\Images",
-L"\\gametitle\\584E07D1\\Content\\Sounds",
-L"\\gametitle\\584E07D1\\Content\\Text",
-L"\\gametitle\\584E07D1\\Content\\Text\\Strings",
-L"\\gametitle\\584E07D1\\Content\\Fonts",
-L"\\gametitle\\584E07D1\\Content\\UI",
-L"\\gametitle\\584E07D1\\Content\\UI\\ContactDetails",
-L"\\gametitle\\584E07D1\\Content\\UI\\ContactEditors",
-L"\\gametitle\\584E07D1\\Content\\UI\\SetupWizard",
-L"\\gametitle\\584E07D1\\Content\\ZuneAppLib",
-L"\\gametitle\\584E07D1\\Content\\Models",
-L"\\gametitle\\584E07D1\\Content\\Pictures",
-L"\\gametitle\\584E07D1\\Content\\Shaders",
-   };
-
 static bool dead = false;
 
-LPCWSTR getIpAddress(){
+static int safe_send(SOCKET client, unsigned char* out, uint32_t count) {
+	uint32_t off = 0;
+	int rem = count;
+	while(true) {
+		int send_res = send(client,(char*)&out[off], rem, 0);
+		if(send_res == SOCKET_ERROR) {
+			return 1;
+		}
+		rem -= send_res;
+		off += send_res;
+		if(rem <= 0) {
+			return 0;
+		}
+		Sleep(100);
+	}
+}
+
+#define INBUFSZ 1024
+#define OBUFSZ 0x10000
+#define RDFILESZ 0x400
+
+static zunecom_CommandResp resp = zunecom_CommandResp_init_zero;
+
+static LPCWSTR getIpAddress(){
 	MIB_IPADDRTABLE  *pIPAddrTable;
 	DWORD            dwSize = 0;
 	DWORD            dwRetVal;
@@ -156,27 +144,25 @@ LPCWSTR getIpAddress(){
 		 sprintf (buffer, "CodePug WebServer Started.\nhttp://%s\n", inet_ntoa(me));
 		 result = MultiCharToUniChar(buffer);
 	}
+	free(pIPAddrTable);
 	return result;
 }
 
 void connection(SOCKET client) {
-	unsigned char inbuf[32];
-	unsigned char out[512];
+	unsigned char* inbuf = (unsigned char*)calloc(INBUFSZ, 1);
+	unsigned char* out = (unsigned char*)calloc(OBUFSZ, 1);
 
-char* c = "Hello\n";
+		char* c = "Hello\n";
 		if (send(client,c,strlen(c),0) == SOCKET_ERROR){
 			closesocket(client);
 			return;
 		}
 
 		while(true) {
-			memset(out, 0, 512);
+			memset(out, 0, OBUFSZ);
 			
 
-			int res = recv(client,(char*)inbuf,32,0);
-
-			//std::swprintf(foo, L"recv: %x", res);
-			//ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
+			int res = recv(client,(char*)inbuf,INBUFSZ,0);
 
 			if (res == SOCKET_ERROR){
 				closesocket(client);
@@ -446,7 +432,7 @@ char* c = "Hello\n";
 					closesocket(client);
 					break;
 				}*/
-} else if (inbuf[0] == 13) {
+/*} else if (inbuf[0] == 13) {
 				u32 idx = ((u32)inbuf[1]) | ((u32)(inbuf[2] << 8)) | ((u32)(inbuf[3] << 16)) | ((u32)(inbuf[4] << 24));
 				u32 idx2 = ((u32)inbuf[5]) | ((u32)(inbuf[6] << 8)) | ((u32)(inbuf[7] << 16)) | ((u32)(inbuf[8] << 24));
 
@@ -462,7 +448,7 @@ if (INVALID_HANDLE_VALUE == hFind)
       //return;
    } 
 
-for(int i =0; i <idx; i++) {
+for(u32 i =0; i <idx; i++) {
 	  r = FindNextFile(hFind, &ffd);
 	  if (r == 0) {break;}
 }
@@ -478,8 +464,8 @@ for(int i =0; i <idx; i++) {
 					closesocket(client);
 					break;
 				}
-
-} else if (inbuf[0] == 14) {
+*/
+/*} else if (inbuf[0] == 14) {
 				u32 idx = ((u32)inbuf[1]) | ((u32)(inbuf[2] << 8)) | ((u32)(inbuf[3] << 16)) | ((u32)(inbuf[4] << 24));
 u32 idx2 = ((u32)inbuf[5]) | ((u32)(inbuf[6] << 8)) | ((u32)(inbuf[7] << 16)) | ((u32)(inbuf[8] << 24));
 
@@ -495,13 +481,13 @@ if (INVALID_HANDLE_VALUE == hFind)
       //return;
    } 
 
-for(int i =0; i <idx; i++) {
+for(u32 i =0; i <idx; i++) {
 	  r = FindNextFile(hFind, &ffd);
 	  if (r == 0) {break;}
 }
 	  std::swprintf(foo, L"%s\\%s", paths2[idx2], ffd.cFileName);
 	  HANDLE f = CreateFileW(foo, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-#define SZSZSZ 0x100004
+
 	  char* buf = (char*)calloc(SZSZSZ, 1);
 	  DWORD cnt = 0;
 	  ReadFile(f, &buf[4], SZSZSZ-4, &cnt, NULL);
@@ -518,6 +504,7 @@ for(int i =0; i <idx; i++) {
 					break;
 				}
 				free(buf);
+				*/
 } else if (inbuf[0] == 15) {
 u32 idx = ((u32)inbuf[1]) | ((u32)(inbuf[2] << 8)) | ((u32)(inbuf[3] << 16)) | ((u32)(inbuf[4] << 24));
 u32 idx2 = ((u32)inbuf[5]) | ((u32)(inbuf[6] << 8)) | ((u32)(inbuf[7] << 16)) | ((u32)(inbuf[8] << 24));
@@ -561,7 +548,7 @@ u32 val = ((u32)inbuf[9]) | ((u32)(inbuf[10] << 8)) | ((u32)(inbuf[11] << 16)) |
 			
 					KFSH ghi = (KFSH) GetProcAddress(mh, L"GetFSHeapInfo");
 
-					for(int j=idx2;j<val;j++) {
+					for(u32 j=idx2;j<val;j++) {
 						char out[1];
 						out[0] = (char)ghi((DWORD)f + j, 0, 0x1338);
 						if (send(client,(char*)out,1,0) == SOCKET_ERROR){
@@ -571,10 +558,193 @@ u32 val = ((u32)inbuf[9]) | ((u32)(inbuf[10] << 8)) | ((u32)(inbuf[11] << 16)) |
 						//Sleep(100);
 					}
 				#endif
+} else if (inbuf[0] == 16) {
+	zunecom_CommandReq msg = zunecom_CommandReq_init_zero;
+	pb_istream_t pbstream = pb_istream_from_buffer(&inbuf[1], res-1);
+	if(!pb_decode(&pbstream, zunecom_CommandReq_fields, &msg)) {
+		memset(out, 0, 128);
+		memset(foo, 0, 128);
+		send(client,(char*)PB_GET_ERROR(&pbstream),128,0);
+
+		std::swprintf(foo, L" pb err: %S r: %d", PB_GET_ERROR(&pbstream), res-1);
+		memcpy(out, foo, 128);
+		out[0] = 0xCD;
+
+		if (safe_send(client,(unsigned char*)out, 128)){
+			closesocket(client);
+			break;
+		}
+		continue;
+	}
+	pb_ostream_t ostream = pb_ostream_from_buffer(out, OBUFSZ);
+	
+
+	WIN32_FIND_DATA ffd;
+    HANDLE hFind = INVALID_HANDLE_VALUE;
+    BOOL r=1;
+	char tmpbuf[200];
+
+	switch(msg.cmd) {
+		case zunecom_CommandReq_CommandType_CMD_LSDIR:
+		{
+
+
+		
+		resp.cmd = zunecom_CommandResp_ResType_RSP_LSDIR;
+		resp.which_payload = zunecom_CommandResp_lsdir_tag;
+
+		memset(foo, 0, 256);
+		std::swprintf(foo, L"%S", msg.payload.lsdir.path);
+
+
+		hFind = FindFirstFile(foo, &ffd);
+
+		if (INVALID_HANDLE_VALUE == hFind) {
+			memset(out, 0, 128);
+			out[0] = 0xCE;
+			memcpy(&out[2], foo, 256);
+
+
+			if (safe_send(client,(unsigned char*)out, 256)){
+				closesocket(client);
+				break;
+			}
+		  break;
+		} 
+#define ZUNECOM_PATH_LEN 270
+		#define ZUNECOM_PATH_CNT 270
+
+		resp.payload.lsdir.path_count = 0;
+
+		wcstombs(tmpbuf, ffd.cFileName, ZUNECOM_PATH_LEN-2);
+		strncpy(resp.payload.lsdir.path[resp.payload.lsdir.path_count].path, tmpbuf, ZUNECOM_PATH_LEN-2);
+		if(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+			resp.payload.lsdir.path[resp.payload.lsdir.path_count].is_dir = true;
+		 } else {
+			resp.payload.lsdir.path[resp.payload.lsdir.path_count].is_dir = false;
+		 }
+		resp.payload.lsdir.path_count++;
+
+		for(; resp.payload.lsdir.path_count < ZUNECOM_PATH_CNT-2;) {
+			  r = FindNextFile(hFind, &ffd);
+			  if (r == 0) {break;}
+			  wcstombs(tmpbuf, ffd.cFileName, ZUNECOM_PATH_LEN-2);
+			  strncpy(resp.payload.lsdir.path[resp.payload.lsdir.path_count].path, tmpbuf, ZUNECOM_PATH_LEN-2);
+			 
+			  if(ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+				  resp.payload.lsdir.path[resp.payload.lsdir.path_count].is_dir = true;
+			  } else {
+				  resp.payload.lsdir.path[resp.payload.lsdir.path_count].is_dir = false;
+			  }
+
+			  resp.payload.lsdir.path_count++;
+		}
+
+	
+	if(!pb_encode(&ostream, zunecom_CommandResp_fields, &resp)) {
+		memset(out, 0, 128);
+		memset(foo, 0, 128);
+		//send(client,(char*)PB_GET_ERROR(&pbstream),256,0);
+
+		std::swprintf(foo, L"pb err: '%S' pc:%d", PB_GET_ERROR(&pbstream), resp.payload.lsdir.path_count);
+		memcpy(out, foo, 256);
+		out[0] = 0xCF;
+		if (safe_send(client,(unsigned char*)out, 256)) { closesocket(client); break; }
+	} else {
+		if(safe_send(client, (unsigned char*) out, ostream.bytes_written)) {
+			closesocket(client);
+			break;
+		}
+	}
+
+	}
+	break;
+
+		case zunecom_CommandReq_CommandType_CMD_RDFILE:
+			{
+				
+
+				std::swprintf(foo, L"%S", msg.payload.rdfile.path);
+				HANDLE f = CreateFileW(foo, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+				DWORD hFz = 0;
+				DWORD lowfz = GetFileSize(f, &hFz);
+
+			  
+			  DWORD cnt = 0;
+			  while(true) {
+				cnt = 0;
+
+				resp.cmd = zunecom_CommandResp_ResType_RSP_RDFILE_DATA;
+				resp.which_payload = zunecom_CommandResp_rdfile_tag;
+
+				r = ReadFile(f, &resp.payload.rdfile.data.bytes[0], RDFILESZ-50, &cnt, NULL);
+				resp.payload.rdfile.data.size = cnt;
+				resp.payload.rdfile.fullsz = lowfz;
+				if(cnt == 0) {
+					break;
+				}
+
+				ostream = pb_ostream_from_buffer(out, OBUFSZ);
+
+				if(!pb_encode(&ostream, zunecom_CommandResp_fields, &resp)) {
+					memset(out, 0, 128);
+					std::swprintf(foo, L"pb err: %S", PB_GET_ERROR(&pbstream));
+					memcpy(out, foo, 128);
+					out[0] = 0xDF;
+
+					if (safe_send(client,(unsigned char*)out, 128)){
+						closesocket(client);
+						break;
+					}
+				}
+				if (safe_send(client,(unsigned char*)out, ostream.bytes_written)){
+					closesocket(client);
+					break;
+				}
+				Sleep(100);
+
+			  }
+			  CloseHandle(f);
+
+				resp.cmd = zunecom_CommandResp_ResType_RSP_RDFILE_EOF;
+				resp.which_payload = zunecom_CommandResp_eof_tag;
+				
+				ostream = pb_ostream_from_buffer(out, OBUFSZ);
+
+				if(!pb_encode(&ostream, zunecom_CommandResp_fields, &resp)) {
+					memset(out, 0, 128);
+					std::swprintf(foo, L"pb err: %S", PB_GET_ERROR(&pbstream));
+					memcpy(out, foo, 128);
+					out[0] = 0xDE;
+
+					if (safe_send(client,(unsigned char*)out, 128)){
+						closesocket(client);
+						break;
+					}
+				}
+
+				if (safe_send(client, (unsigned char*)out, ostream.bytes_written)){
+					closesocket(client);
+					break;
+				}
+			}
+			break;
+	 
+
+	default:
+		out[0] = 0xFF;
+		if (safe_send(client,(unsigned char*)out, 32)){
+			closesocket(client);
+			break;
+		}
+		break;
+}
+
 
 			} else {
 				out[0] = 0xFF;
-				if (send(client,(char*)out,32,0) == SOCKET_ERROR){
+				if (safe_send(client,(unsigned char*)out, 32)){
 					closesocket(client);
 					break;
 				}
@@ -616,7 +786,6 @@ DWORD Server(void* sd_) {
 	ZDKSystem_ShowMessageBox(getIpAddress(), MESSAGEBOX_TYPE_OK);
 	while(!dead) {
 		client = accept(sd,NULL,NULL);
-		//ZDKSystem_ShowMessageBox(L"Got client", MESSAGEBOX_TYPE_OK);
 
 
 		connection(client);
@@ -626,7 +795,7 @@ DWORD Server(void* sd_) {
 }
 
 
-int hax_30() {
+static int hax_30() {
 	BOOL b = false;
 	HANDLE h;
 	DWORD outsz = 0;
@@ -656,6 +825,8 @@ int hax_30() {
 		inbuf->d = NULL;
 		b = DeviceIoControl(h, /*cmd*/0x1d000c, inbuf, sizeof(Input), /* outb, != null */ outb, /* outs, >3 */ 1024, &outsz, NULL);
 	}
+
+	free(outb);
 	return 0;
 }
 
@@ -696,6 +867,7 @@ int hax() {
 		ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
 		return 0;
 	}
+	free(inbuf);
 
 	/* We can now use kernel pointers as outputs for GetExitCodeThread */
 
@@ -775,6 +947,7 @@ bx r0
 	/* Step 4: allow access to CreateStaticMapping for untrusted via GetRomFileInfo */
 	//kwr(0x80060d98, 0x80069de0);
 
+/*!!!!!!!!!!!!!!!!!!!!!! GetRomFileInfo was problen */
 
 
 
@@ -878,18 +1051,7 @@ bx r0
 	ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
 #endif
 
-/*
-	u32 off = 0;
-	std::wstring name;
-	u16 c = kreadu16(proc_name_ptr);
-	while(c != 0) {
-		name.push_back(c);
-		off+=2;
-		c = kreadu16(proc_name_ptr + off);
-	}
 
-std::swprintf(foo, L"nk: %p, nx: %p, bk: %p, np:%p,ppd:%x,n:%s", nk, proc_next, proc_last, proc_name_ptr, ppd, name.c_str());
-ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);*/
 #endif
 
 #if 1
@@ -920,6 +1082,9 @@ ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);*/
 	//kmemcpy(0x8006ab3c, nop, sizeof(nop)); // halt no
 	//kmemcpy(0x8006ab40, nop, sizeof(nop)); //
 
+	//kmemcpy(0x80073b04, ret, sizeof(ret)); // clean boot no
+
+	//kmemcpy(0x800725d8, ret, sizeof(ret)); // power no
 
 	//ZDKSystem_ShowMessageBox(L"PWNED by CUB3D", MESSAGEBOX_TYPE_OK);
 
@@ -931,47 +1096,10 @@ ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);*/
 	return 0;
 }
 
-HINSTANCE hInst;
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
-{
-    switch (uMsg)
-    {
-/*    case WM_PAINT:
-    {
-        PAINTSTRUCT ps;
-        HDC hdc = BeginPaint(hwnd, &ps);
-
-        // All painting occurs here, between BeginPaint and EndPaint.
-
-        FillRect(hdc, &ps.rcPaint, (HBRUSH) (COLOR_WINDOW+1));
-
-		
-
-        EndPaint(hwnd, &ps);
-		return 0L;
-    }*/
-
-
-case WM_DESTROY:
-    PostQuitMessage(0);
-    return 0;
-
-//case WM_CREATE:
-//	CreateWindow(TEXT("edit"), NULL, WS_CHILD | WS_VISIBLE | WS_BORDER, 400, 50, 100, 40, hwnd, 0, hInst, NULL);
-//	return 0;
-
-    }
-	return DefWindowProc(hwnd, uMsg, wParam, lParam);
-}
-
 
 int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPWSTR lpCmdLine, int nShowCmd) {
 
-std::swprintf(foo, L"test lol");
-		ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
-		return 0;
 
-//SuppressReboot();
 #if 0
 if(CopyFileW(L"\\gametitle\\584E07D1\\Content\\nativeapp.exe", L"\\Flash2\\payload.exe", false) != TRUE) {
 	std::swprintf(foo, L"Copy fail");
@@ -980,7 +1108,9 @@ if(CopyFileW(L"\\gametitle\\584E07D1\\Content\\nativeapp.exe", L"\\Flash2\\paylo
 }
 #endif
 
-#if 0
+SuppressReboot();
+
+#if 1
 CopyFileW(L"\\gametitle\\584E07D1\\Content\\nativeapp.exe", L"\\Flash2\\payload.exe", false);
 #endif
 
@@ -989,47 +1119,7 @@ std::swprintf(foo, L"Hello");
 ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
 #endif
 
-/*
-HKEY h;
-long s =  RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"init", REG_OPTION_NON_VOLATILE, KEY_ALL_ACCESS, &h);
-
-if(s != ERROR_SUCCESS) {
-	std::swprintf(foo, L"error %d", s);
-	ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
-	return 0;
-}
-
-BYTE* b = (BYTE*)calloc(1024, 1);
-DWORD sz = 1024;
-
-
-s = RegQueryValueExW (h, L"Launch93", 0, NULL, b, &sz);
-
-if(s != ERROR_SUCCESS) {
-	std::swprintf(foo, L"error2 %d", s);
-	ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
-	//return 0;
-} else {
-
-
-//std::swprintf(foo, L"good: %s", b);
-	//ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
-}
-	wchar_t* b2 = (wchar_t*)calloc(1024, 1);
-	std::swprintf(b2, L"Test.exe");
-	s = RegSetValueExW(h, L"Launch93", 0, REG_SZ, (BYTE*)b2, wcslen(b2)*2+2); 
-
-if(s != ERROR_SUCCESS) {
-	std::swprintf(foo, L"error3 %d", s);
-	ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
-	return 0;
-}
-
-RegFlushKey(h);
-RegCloseKey(h);
-h = NULL;
-*/
-#if 0
+#if 1
 	hax();
 #endif
 
@@ -1037,95 +1127,6 @@ h = NULL;
 	hax_30();
 #endif
 
-/*
-	 hInst = hInstance;
-
-	const wchar_t CLASS_NAME[]  = L"Sample Window Class";
-
-	WNDCLASS wc = { };
-
-	     wc.hbrBackground = (HBRUSH) GetStockObject (WHITE_BRUSH) ;
-	wc.style = CS_VREDRAW | CS_HREDRAW;
-	wc.lpfnWndProc   = WindowProc;
-	wc.hInstance     = hInstance;
-	wc.lpszClassName = CLASS_NAME;
-	RegisterClass(&wc);
-
-	HWND hwnd = CreateWindowEx(
-		0,                              // Optional window styles.
-		CLASS_NAME,                     // Window class
-		L"Learn to Program Windows",    // Window text
-		0x90000000,            // Window style
-
-		// Size and position
-		0, 0, 100, 100,
-
-		NULL,       // Parent window    
-		NULL,       // Menu
-		hInstance,  // Instance handle
-		NULL        // Additional application data
-    );
-
-	if (hwnd == NULL)
-	{
-		return 0;
-	}
-
-
-HWND hwndButton = CreateWindow( 
-    L"BUTTON",  // Predefined class; Unicode assumed 
-    L"OK",      // Button text 
-    WS_TABSTOP | WS_VISIBLE | WS_CHILD | BS_DEFPUSHBUTTON,  // Styles 
-    10,         // x position 
-    10,         // y position 
-    100,        // Button width
-    100,        // Button height
-    hwnd,     // Parent window
-    NULL,       // No menu.
-	hInstance, 
-    NULL);      // Pointer not needed.
-
-
-ShowWindow(hwnd, SW_SHOWMAXIMIZED);
-	UpdateWindow(hwnd);
-
-	
-MSG msg = { };
-while (GetMessage(&msg, NULL, 0, 0) > 0)
-{
-    TranslateMessage(&msg);
-    DispatchMessage(&msg);
-}
-*/
-
-/*
-HMODULE mh = GetModuleHandleW(L"coredll.dll");
-	FFS ffs = (FFS) GetProcAddress(mh, L"FindFirstStore");
-
-	#pragma pack(push,1)
-		struct SI{
-		DWORD cbSize;
-  TCHAR szDeviceName[8];
-  TCHAR szStoreName[32];
-  DWORD pad [1024];
-	};
-	#pragma pack(pop)
-
-	//struct SI* si = (struct SI*)calloc(0x2000,1);//sizeof(SI), 1);
-	//si->cbSize = 0x2000;
-
-		struct SI si;
-
-HANDLE h = ffs(&si);
-if(h == INVALID_HANDLE_VALUE) {
-	DWORD err = GetLastError();
-		std::swprintf(foo, L"bad ioctl: %x", err);
-		ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
-		return 0;
-}
-
-std::swprintf(foo, L"test %d", si.cbSize);
-ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);*/
 
 
 #if 0
@@ -1185,13 +1186,3 @@ ZDKSystem_ShowMessageBox(foo, MESSAGEBOX_TYPE_OK);
 
 	return 0;
 }
-
-
-/* random notes:
-
-running a xna app kills the keys used for encrypted games
-browser route can probably get them
-q1: do stacks move
-q2: can we spill a VAR to stack and leak that way
-
-*/

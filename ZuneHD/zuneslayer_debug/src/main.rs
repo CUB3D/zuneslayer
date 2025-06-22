@@ -1,11 +1,25 @@
 #![feature(str_from_utf16_endian)]
+#![allow(unused_variables)]
+#![allow(unreachable_code)]
+#![allow(dead_code)]
+
+use crate::zunecom::command_resp::ResType;
+use crate::zunecom::command_req::PayloadRdfile;
+use crate::zunecom::CommandResp;
+use prost::Message;
 extern crate core;
 
-use std::arch::x86_64::_rdtsc;
+
+use crate::zunecom::command_req::PayloadLsdir;
+use crate::zunecom::command_req::CommandType;
+use crate::zunecom::CommandReq;
 use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::PathBuf;
 use std::time::Duration;
+use indicatif::{ProgressBar, ProgressStyle};
 use serde::Serialize;
+use tracing::{error, info, warn};
 
 #[derive(Debug)]
 struct Reg {
@@ -214,7 +228,7 @@ fn kreadfile(tcp: &mut TcpStream, addr: u32, p: u32) -> Vec<u8> {
     c.resize(32, 0);
     tcp.write_all(&c).unwrap();
 
-    const SZ: usize = 0x100000;
+    const SZ: usize = 0x600000;
 
     let mut iubu = [0u8; SZ + 4];
     let mut o = Vec::new();
@@ -361,7 +375,7 @@ fn preadstr(tcp: &mut TcpStream, p: u32, addr: u32) -> String {
     let mut name = Vec::new();
     let mut off = 2;
     let mut c = (pread32(tcp, p, addr).unwrap() & 0xFF) as u16;
-    while (c != 0) {
+    while c != 0 {
         name.push(c);
         c = (pread32(tcp, p, addr + off).unwrap() & 0xFF) as u16;
         off += 2;
@@ -375,7 +389,7 @@ fn kreadstr(tcp: &mut TcpStream, addr: u32) -> String {
     let mut name = Vec::new();
     let mut off = 2;
     let mut c = kread_u16(tcp, addr);
-    while (c != 0) {
+    while c != 0 {
         name.push(c);
         c = kread_u16(tcp, addr + off);
         off += 2;
@@ -521,21 +535,218 @@ fn wait_for_proc(tcp: &mut TcpStream, proc: u32, n: &String) -> (u32, u32) {
         nk = next;
     }
 }
+pub mod zunecom {
+
+
+        include!(concat!(env!("OUT_DIR"), "/zunecom.rs"));
+
+}
+
+
+fn lsdir(tcp: &mut TcpStream, base: &String) -> Option<Vec<(String, bool)>> {
+    let cmd = CommandReq {
+        cmd: CommandType::CmdLsdir.into(),
+        payload: Some(crate::zunecom::command_req::Payload::Lsdir(
+            PayloadLsdir {
+                path: format!("{base}\\*")
+            }
+        ))
+    };
+    let buf = cmd.encode_to_vec();
+
+    let mut c = Vec::new();
+    c.push(16);
+    c.extend_from_slice(buf.as_slice());
+    tcp.write_all(&c).unwrap();
+
+    let mut total = Vec::new();
+    let mut out = Vec::new();
+
+    loop {
+        let mut iubu = [0u8; 0x808];
+        let sz = match tcp.read(&mut iubu) {
+            Ok(sz) => sz,
+            Err(_) => return None,
+        };
+        let iubu = &iubu[..sz];
+        total.extend_from_slice(iubu);
+        // println!("{sz:x}");
+        let resp = CommandResp::decode(total.as_slice());
+        // println!("{resp:?}");
+
+
+        if let Ok(resp) = resp {
+            if let Some(p) = resp.payload {
+                if let crate::zunecom::command_resp::Payload::Lsdir(ls) = p {
+                    assert!(ls.path.len() < 270);
+                    for p in ls.path {
+                        out.push((format!("{base}\\{}", p.path), p.is_dir));
+                    }
+                    break;
+                } else {
+                    panic!();
+                }
+            } else {
+                panic!()
+            }
+        } else {
+            println!("what {:?}", resp);
+            std::fs::write("err", &total).unwrap()
+        }
+    }
+
+    // println!("{out:?}");
+
+    Some(out)
+}
+
+fn dlfile(tcp: &mut TcpStream, base: &String) -> Option<Vec<u8>> {
+    let cmd = CommandReq {
+        cmd: CommandType::CmdRdfile.into(),
+        payload: Some(crate::zunecom::command_req::Payload::Rdfile(
+            PayloadRdfile {
+                path: base.clone(),
+            }
+        ))
+    };
+    let buf = cmd.encode_to_vec();
+    // println!("{}", buf.len());
+
+    let mut c = Vec::new();
+    c.push(16);
+    c.extend_from_slice(buf.as_slice());
+    tcp.write_all(&c).unwrap();
+
+    let mut out = Vec::new();
+
+    let mut total = Vec::new();
+
+    let mut totalsz = 0xFFFFu32; // so we detect dropped first pkt with sz
+
+    let mut err_cnt = 0;
+    let mut i = 0;
+
+    let mut bar = ProgressBar::new(1000);
+    bar.set_style(ProgressStyle::with_template ("{msg}: {wide_bar} {pos}/{len} {eta}").unwrap());
+    bar.set_message(format!("{}: ", base));
+
+    let mut iubu = [0u8; 0x1000];
+
+    loop {
+        if err_cnt > 10 {
+            return None;
+        }
+
+        let sz = match tcp.read(&mut iubu) {
+            Ok(sz) => sz,
+            Err(e) => {
+                error!("tmp err: {e}");
+                return None;
+            }
+        };
+        let iubu = &iubu[..sz];
+        total.extend_from_slice(iubu);
+        // println!("{iubu:?}");
+
+        if sz == 0 {
+            warn!("Zero sized read");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            err_cnt += 1;
+            continue;
+        }
+
+        //println!("{sz:x}");
+        // println!("{iubu:?}");
+        // std::fs::write("a", iubu).unwrap();
+
+        let resp = CommandResp::decode(total.as_slice());
+        // println!("{resp:?}");
+
+
+        if let Ok(resp) = resp {
+            i += 1;
+
+            if resp.cmd == ResType::RspRdfileEof as i32 {
+                // If file is zero sized, we will get no payloads, just an eof
+                if i > 1 {
+                    if out.len() != totalsz as usize {
+                        error!("WRONG SZ  {base}: {}, {}, {i}", out.len(), totalsz);
+                        return None;
+                    }
+                }
+                if out.len() == 0 {
+                    error!("zsf: {base}");
+                    return Some(out);
+                }
+                break;
+            } else if let Some(p) = &resp.payload {
+                if let crate::zunecom::command_resp::Payload::Rdfile(f) = p {
+                    if totalsz == 0xFFFFu32 {
+                        totalsz = f.fullsz;
+                        bar.set_length(totalsz as _);
+                    } else {
+                        if totalsz != f.fullsz {
+                            error!("totalsz change!! {} -> {}", totalsz, f.fullsz);
+                            return None;
+                        }
+                    }
+
+                    out.extend_from_slice(&f.data);
+                    bar.set_position(out.len() as _);
+
+                    total = total[resp.encoded_len()..].to_vec();
+
+                    // println!("{} / {}", out.len(), totalsz);
+
+                } else {
+                    panic!("what: {p:?}");
+                }
+            } else {
+                error!("Unknonwn pkt");
+                return None;
+                // panic!()
+            }
+
+            // println!("{resp:?}");
+        } else {
+            if iubu[0] == 0xCD {
+                std::fs::write("err", iubu).unwrap();
+                error!("GOT ERR MESG");
+                return None;
+            }
+        }
+    }
+
+    Some(out)
+}
 
 fn main() {
+    tracing_subscriber::fmt::fmt().init();
+
     let mut tcp = TcpStream::connect(("192.168.1.20", 1337)).unwrap();
-    tcp.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+    tcp.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
     tcp.set_nodelay(true).unwrap();
 
-    let mut iubu = [0u8; 8];
-    tcp.read(&mut iubu).unwrap();
-    println!("{:?}", String::from_utf8(iubu.to_vec()));
+    loop {
+        let mut iubu = [0u8; 8];
+        match tcp.read(&mut iubu) {
+            Ok(sz) => {
+                println!("{:?}", String::from_utf8(iubu.to_vec()));
+                break;
+            },
+            Err(e) => {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+        }
+    }
 
     let nk = kread_u32(&mut tcp, 0x80bee010);
     println!("{nk:x}");
 
-    kttttt(&mut tcp);
-    return;;
+    if false {
+        kttttt(&mut tcp);
+        return
+    }
 
     if false {
         let mut procs = Vec::new();
@@ -555,47 +766,55 @@ fn main() {
         std::fs::write("out.json", &o).unwrap();
     }
 
-    // kquit(&mut tcp);
 
-
-    let pa = [
-        "out/",
-        "out/Content",
-        "out/Content/Audio",
-        "out/Content/Images",
-        "out/Content/Sounds",
-        "out/Content/Text",
-        "out/Content/Text/Strings",
-        "out/Content/Fonts",
-        "out/Content/UI",
-        "out/Content/UI/ContactDetails",
-        "out/Content/UI/ContactEditors",
-        "out/Content/UI/SetupWizard",
-        "out/Content/ZuneAppLib",
-        "out/Content/Models",
-        "out/Content/Pictures",
-        "out/Content/Shaders",
-
-    ];
-    for p in 0..pa.len() {
-        let pp = pa[p];
-        for i in 0..100 {
-            let s = klistfile(&mut tcp, i, p as u32);
-            if s.contains("r: 0") {
+    fn do_stuff(tcp: &mut TcpStream, p: String) {
+        let more_files;
+        loop {
+            info!("[*] ls {}", &p);
+            let tmp_more_files = lsdir(tcp, &p);
+            if let Some(tmp_more_files) = tmp_more_files {
+                info!("[*] ls {:?}", tmp_more_files);
+                more_files = tmp_more_files;
                 break;
             }
-            // println!("{s}");
-            let name = s[5..].split(" ").next().unwrap().to_string();
-            println!("{pp}/{name}");
-            if pa.iter().any(|x| x.contains(&format!("/{name}").as_str())) {
-                // println!("skp");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        for (f, dir) in more_files {
+
+            let pth = PathBuf::from(format!("out/{}", f).replace("\\", "/"));
+
+            if dir {
+                info!("[*] rec {f}");
+                std::fs::create_dir_all(&pth).unwrap();
+                do_stuff(tcp, f);
                 continue;
+            } else {
+                let dat;
+                loop {
+                    info!("[*] dl {f}");
+                    let d = dlfile(tcp, &f);
+                    if let Some(d) = d {
+                        dat = d;
+                        break
+                    }
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+
+                std::fs::write(&pth, &dat).unwrap();
+                info!("[*] {f}: {}", dat.len());
             }
-            let d = kreadfile(&mut tcp, i, p as u32);
-            let _ = std::fs::create_dir_all(pp);
-            std::fs::write(&format!("{pp}/{name}"), &d).unwrap();
         }
     }
+    std::fs::create_dir_all("out/gametitle").unwrap();
+    do_stuff(&mut tcp, "\\gametitle".to_string());
+
+    // std::fs::create_dir_all("out/gametitle/584E07D1/Content/Puzzles").unwrap();
+    // do_stuff(&mut tcp, "\\gametitle\\584E07D1\\Content\\Puzzles".to_string());
+
+    info!("[DONE]");
+
+    return;
+
 
     // let gs = procs.iter().find(|p| p.name.contains("ZIE")).unwrap();
     // kkill(&mut tcp, gs.id);
@@ -865,3 +1084,7 @@ return;
 
 }
 
+//todo: try dump via browser 9.1.15.62
+//todo for 4k addr iram maybe need to enable with IRAMA
+//AHB_ARBITRATION_USR_PROTECT_0
+//CLK_ENB_IRAMD

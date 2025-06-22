@@ -221,6 +221,26 @@
 				>
 			</File>
 			<File
+				RelativePath=".\protocol\msg.pb.h"
+				>
+			</File>
+			<File
+				RelativePath=".\protocol\pb.h"
+				>
+			</File>
+			<File
+				RelativePath=".\protocol\pb_common.h"
+				>
+			</File>
+			<File
+				RelativePath=".\protocol\pb_decode.h"
+				>
+			</File>
+			<File
+				RelativePath=".\protocol\pb_encode.h"
+				>
+			</File>
+			<File
 				RelativePath=".\kwasm\platform.h"
 				>
 			</File>
@@ -266,6 +286,22 @@
 			</File>
 			<File
 				RelativePath=".\main.cpp"
+				>
+			</File>
+			<File
+				RelativePath=".\protocol\msg.pb.c"
+				>
+			</File>
+			<File
+				RelativePath=".\protocol\pb_common.c"
+				>
+			</File>
+			<File
+				RelativePath=".\protocol\pb_decode.c"
+				>
+			</File>
+			<File
+				RelativePath=".\protocol\pb_encode.c"
 				>
 			</File>
 			<File
